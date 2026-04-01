@@ -9,9 +9,10 @@ interface ChartCardProps {
   useCases?: string[];
   children: React.ReactNode;
   controls?: React.ReactNode;
+  dataSource?: 'live' | 'mock' | null;
 }
 
-export default function ChartCard({ title, description, useCases, children, controls }: ChartCardProps) {
+export default function ChartCard({ title, description, useCases, children, controls, dataSource }: ChartCardProps) {
   const [showInfo, setShowInfo] = useState(false);
 
   return (
@@ -19,6 +20,15 @@ export default function ChartCard({ title, description, useCases, children, cont
       <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+          {dataSource && (
+            <span className={`px-2 py-0.5 text-[10px] font-semibold uppercase rounded-full ${
+              dataSource === 'live'
+                ? 'bg-green-100 text-green-700 border border-green-200'
+                : 'bg-gray-100 text-gray-500 border border-gray-200'
+            }`}>
+              {dataSource === 'live' ? 'Live API' : 'Mock Data'}
+            </span>
+          )}
           {(description || useCases) && (
             <button
               onClick={() => setShowInfo(!showInfo)}

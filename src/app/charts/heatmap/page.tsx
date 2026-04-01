@@ -1,21 +1,59 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import PlotlyChart from '@/components/PlotlyChart';
 import ChartCard from '@/components/ChartCard';
 import ParamSlider from '@/components/ParamSlider';
 import { generateHeatmapData, generateSpatialHeatmap } from '@/lib/drug-data';
+import { useApiData } from '@/lib/hooks/use-api-data';
+import type { CompoundProperty } from '@/lib/api/pubchem';
+
+// Transform PubChem properties into a drug-property heatmap
+function transformToHeatmap(raw: { properties: CompoundProperty[] }) {
+  const props = raw.properties.filter(
+    (p) => p.XLogP != null && p.MolecularWeight != null && p.TPSA != null && p.drugName
+  );
+  if (props.length < 10) throw new Error('Insufficient data');
+
+  const drugs = props.slice(0, 20);
+  const genes = drugs.map((d) => d.drugName!);
+  const samples = ['MW', 'logP', 'TPSA', 'HBD', 'HBA'];
+
+  // Normalize each property to z-score-like values (-3 to 3 range)
+  const mwMean = drugs.reduce((s, d) => s + d.MolecularWeight, 0) / drugs.length;
+  const mwStd = Math.sqrt(drugs.reduce((s, d) => s + Math.pow(d.MolecularWeight - mwMean, 2), 0) / drugs.length) || 1;
+  const logPMean = drugs.reduce((s, d) => s + d.XLogP, 0) / drugs.length;
+  const logPStd = Math.sqrt(drugs.reduce((s, d) => s + Math.pow(d.XLogP - logPMean, 2), 0) / drugs.length) || 1;
+  const tpsaMean = drugs.reduce((s, d) => s + d.TPSA, 0) / drugs.length;
+  const tpsaStd = Math.sqrt(drugs.reduce((s, d) => s + Math.pow(d.TPSA - tpsaMean, 2), 0) / drugs.length) || 1;
+
+  const z = drugs.map((d) => [
+    +((d.MolecularWeight - mwMean) / mwStd).toFixed(2),
+    +((d.XLogP - logPMean) / logPStd).toFixed(2),
+    +((d.TPSA - tpsaMean) / tpsaStd).toFixed(2),
+    +((d.HBondDonorCount - 2) / 1.5).toFixed(2),
+    +((d.HBondAcceptorCount - 5) / 3).toFixed(2),
+  ]);
+
+  return { genes, samples, z };
+}
 
 export default function HeatmapPage() {
-  const heatmap = useMemo(() => generateHeatmapData(), []);
+  // Heatmap — LIVE from PubChem
+  const transformHM = useCallback(transformToHeatmap, []);
+  const { data: heatmap, isLive: heatmapLive } = useApiData(
+    '/api/pubchem/properties?limit=20',
+    () => generateHeatmapData(),
+    transformHM
+  );
+
   const [heatColorscale, setHeatColorscale] = useState<string>('RdBu');
   const [showValues, setShowValues] = useState(false);
 
-  // Spatial heatmap
+  // Spatial heatmap — stays mock
   const spatial = useMemo(() => generateSpatialHeatmap(), []);
   const [timeStep, setTimeStep] = useState(0);
 
-  // Simulate time evolution by applying a multiplier
   const spatialAtTime = useMemo(() => {
     const factor = 1 + timeStep * 0.15;
     return {
@@ -32,11 +70,15 @@ export default function HeatmapPage() {
       </div>
 
       <div className="grid gap-8">
-        {/* 1. Gene Expression Heatmap */}
+        {/* 1. Heatmap — LIVE */}
         <ChartCard
-          title="Heatmap — Gene Expression Profile"
-          description="Differential expression of drug target genes across patient samples. Values are log₂ fold-change."
+          title={heatmapLive ? 'Heatmap — Drug Molecular Property Profile (PubChem)' : 'Heatmap — Gene Expression Profile'}
+          description={heatmapLive
+            ? 'Z-score normalized molecular properties for real FDA-approved drugs from PubChem. Columns: MW, logP, TPSA, H-bond donors, H-bond acceptors.'
+            : 'Differential expression of drug target genes across patient samples. Values are log₂ fold-change.'
+          }
           useCases={['Gene expression', 'Continuous variable matrices', 'Parameter relationships']}
+          dataSource={heatmapLive ? 'live' : 'mock'}
           controls={
             <div className="flex items-center gap-4">
               <select
@@ -66,8 +108,10 @@ export default function HeatmapPage() {
                 type: 'heatmap',
                 colorscale: heatColorscale,
                 zmid: 0,
-                colorbar: { title: 'log₂ FC', titleside: 'right' },
-                hovertemplate: 'Gene: %{y}<br>Sample: %{x}<br>log₂FC: %{z:.2f}<extra></extra>',
+                colorbar: { title: heatmapLive ? 'Z-score' : 'log₂ FC', titleside: 'right' },
+                hovertemplate: heatmapLive
+                  ? 'Drug: %{y}<br>Property: %{x}<br>Z-score: %{z:.2f}<extra></extra>'
+                  : 'Gene: %{y}<br>Sample: %{x}<br>log₂FC: %{z:.2f}<extra></extra>',
                 ...(showValues
                   ? {
                       text: heatmap.z.map((row) => row.map((v) => v.toFixed(1))),
@@ -79,9 +123,9 @@ export default function HeatmapPage() {
             ]}
             layout={{
               height: 480,
-              margin: { t: 20, b: 60, l: 100, r: 100 },
-              xaxis: { title: 'Sample', tickfont: { size: 10 } },
-              yaxis: { title: 'Gene', tickfont: { size: 11 } },
+              margin: { t: 20, b: 60, l: heatmapLive ? 140 : 100, r: 100 },
+              xaxis: { title: heatmapLive ? 'Property' : 'Sample', tickfont: { size: 10 } },
+              yaxis: { title: heatmapLive ? 'Drug' : 'Gene', tickfont: { size: 11 } },
               plot_bgcolor: 'white',
               paper_bgcolor: 'white',
             }}
